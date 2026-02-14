@@ -1,85 +1,94 @@
+// Initialize map
 let map = L.map("map", {
   center: [-0.1, 36.5],
-  zoom: 7,
+  zoom: 7
 });
 
+let populationLayer;
+
+// === 3 Tile Layers (Base Maps) ===
 let osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: "&copy; OpenStreetMap",
+  attribution: "&copy; OpenStreetMap contributors"
 }).addTo(map);
 
 let esriImagery = L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-  { attribution: "Tiles © Esri" }
+  {
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+  }
 );
 
 let cartoLight = L.tileLayer(
-  "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-  { attribution: "&copy; Carto" }
+  "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+  {
+    attribution: '&copy; OpenStreetMap &copy; CARTO'
+  }
 );
 
 let baseMaps = {
-  OpenStreetMap: osm,
+  "OpenStreetMap": osm,
   "ESRI World Imagery": esriImagery,
-  "Carto Light": cartoLight,
+  "CartoDB Light": cartoLight
 };
 
-// Manual break values + colors :contentReference[oaicite:12]{index=12}
+// === Symbology (Quantiles - same as manual) ===
 let breaks = [-Infinity, 34, 132, 330, 507, Infinity];
-let colors = ["#fef0d9", "#fdcc8a", "#fc8d59", "#e34a33", "#b30000"];
+let colors = ['#fef0d9', '#fdcc8a', '#fc8d59', '#e34a33', '#b30000'];
 
-// Read density even if field name differs
-function getDensity(props) {
-  return (
-    props?.density ??
-    props?.Density ??
-    props?.pop_density ??
-    props?.popDensity ??
-    props?.POP_DENS ??
-    null
-  );
-}
-
-const population_color = (d) => {
-  if (d === null || d === undefined || isNaN(d)) return "#cccccc";
-  for (let i = 0; i < breaks.length - 1; i++) {
-    if (d > breaks[i] && d <= breaks[i + 1]) return colors[i];
+const getColor = (d) => {
+  for (let i = 0; i < breaks.length; i++) {
+    if (d > breaks[i] && d < breaks[i + 1]) {
+      return colors[i];
+    }
   }
-  return colors[0];
+  return colors[colors.length - 1];
 };
 
-const population_style = (feature) => {
-  const d = Number(getDensity(feature.properties));
+const style = (feature) => {
   return {
-    fillColor: population_color(d),
+    fillColor: getColor(feature.properties.density),
     color: "black",
-    opacity: 1,
-    fillOpacity: 0.7,
     weight: 0.5,
+    opacity: 1,
+    fillOpacity: 0.7
   };
 };
 
-fetch("data/kenya-adm1-pop.geojson") // manual path :contentReference[oaicite:13]{index=13}
-  .then((r) => r.json())
-  .then((data) => {
-    const layer = L.geoJSON(data, {
-      style: population_style,
-      onEachFeature: (feature, lyr) => {
-        const county =
-          feature.properties?.NAME_1 ??
-          feature.properties?.name ??
-          "County";
-
-        const dens = getDensity(feature.properties);
-        lyr.bindPopup(`
-          <div>
-            <b>County:</b> ${county}<br>
-            <b>Pop. Density:</b> ${dens !== null ? Number(dens).toFixed(2) : "N/A"} per Sq. Km
+// === Load GeoJSON + Popups + Legend ===
+fetch("data/kenya-adm1-pop.geojson")
+  .then(response => response.json())
+  .then(data => {
+    populationLayer = L.geoJSON(data, {
+      style: style,
+      onEachFeature: (feature, layer) => {
+        layer.bindPopup(`
+          <div style="font-family: Arial; min-width: 200px;">
+            <b>County:</b> ${feature.properties.NAME_1}<br>
+            <b>Population Density:</b> ${feature.properties.density.toFixed(2)} people/km²
           </div>
         `);
-      },
+      }
     }).addTo(map);
 
-    map.fitBounds(layer.getBounds());
-    L.control.layers(baseMaps, { "Population Density": layer }).addTo(map);
-  })
-  .catch((e) => console.error("Choropleth load error:", e));
+    // Layer control with overlays
+    let overlayMaps = {
+      "Population Density": populationLayer
+    };
+    L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
+
+    // Legend
+    let legend = L.control({ position: "bottomright" });
+    legend.onAdd = function () {
+      let div = L.DomUtil.create("div", "info legend");
+      let grades = [0, 34, 132, 330, 507];
+      div.innerHTML = "<strong>Population Density<br>(people per km²)</strong><br>";
+
+      for (let i = 0; i < grades.length; i++) {
+        div.innerHTML +=
+          '<i style="background:' + getColor(grades[i] + 0.1) + '"></i> ' +
+          grades[i] + (grades[i + 1] ? ' – ' + grades[i + 1] : '+') + '<br>';
+      }
+      return div;
+    };
+    legend.addTo(map);
+  });
